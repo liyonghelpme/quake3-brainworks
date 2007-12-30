@@ -137,6 +137,6 @@ set cc=lcc -DQ3_VM -DMISSIONPACK -S -Wf-target=bytecode -Wf-g -I..\..\cgame -I..
 
 
 q3asm -f ../game_ta
-copy \quake3\baseq3\vm\qagame.qvm \quake3\brainworks_ta\vm\qagame.qvm
+del \quake3\brainworks_ta\vm\qagame.map
 :quit
 cd ..
