@@ -1127,7 +1127,7 @@ void BotAttackFireUpdate(bot_state_t *bs)
 		G_Printf("  Bot expected %s with correct view understanding\n",
 				 PrintStringHitStatus(fire_corrected_view));
 
-		// State what would have occured
+		// State what would have occurred
 		G_Printf("  Shot would %s\n", PrintStringHitStatus(fire_both));
 	}
 #endif

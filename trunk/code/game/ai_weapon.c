@@ -828,31 +828,6 @@ int BotActivateWeapon(bot_state_t *bs)
 }
 
 /*
-===================
-BotWeaponAttackRate
-
-Estimate the percent of time in combat the bot
-will fire the specified weapon.
-===================
-*/
-float BotWeaponAttackRate(bot_state_t *bs, int weapon)
-{
-	float attack_rate;
-
-	// Without knowing anything else, assume the weapon is fired constantly
-	if (bs->attack_rate[weapon].potential <= 0)
-		return 1.0;
-
-	// Compute and reasonably bound the attack rate.
-	// NOTE: The 0.5 attack rate is rather aggressive, but bots should never
-	// think that a weapon won't be fired that much.
-	attack_rate = bs->attack_rate[weapon].actual / bs->attack_rate[weapon].potential;
-	if (attack_rate < 0.5)
-		attack_rate = 0.5;
-	return attack_rate;
-}
-
-/*
 =============
 BotDamageRate
 
@@ -924,8 +899,8 @@ int BotTargetWeapon(bot_state_t *bs)
 {
 	int health, ammo, weapon, best_weapon;
 	int required_hits, expected_hits, required_fires;
-	float attack_rate;
-	float damage_factor, reload_factor;
+	float shot_hit_rate, attack_rate;
+	float damage_factor, reload_factor, reload;
 	float time, hits, damage, total_damage;
 	float damage_rate, best_damage_rate;
 	qboolean blast;
@@ -1029,7 +1004,7 @@ int BotTargetWeapon(bot_state_t *bs)
 			continue;
 
 		// Estimate what percent of combat the bot will fire this weapon
-		attack_rate = BotWeaponAttackRate(bs, weapon);
+		attack_rate = BotAttackRate(bs, &acc);
 
 		// Start estimating how much time it will take to score the required number of hits
 		//
@@ -1061,11 +1036,17 @@ int BotTargetWeapon(bot_state_t *bs)
 		// Compute how many hits this weapon needs to kill the opponent
 		required_hits = ceil(health / damage);
 
+		// Estimate the percent of this weapon's shots that hit
+		shot_hit_rate = hits / acc.shots;
+
 		// Estimate how many hits the bot can get before running out of ammo
 		if (ammo > 0)
-			expected_hits = ceil(ammo * ws->shots * hits / acc.shots);
+			expected_hits = ceil(ammo * ws->shots * shot_hit_rate);
 		else
 			expected_hits = required_hits;
+
+		// The weapon reloads this fast
+		reload = ws->reload * reload_factor;
 
 		// Check if the bot has enough ammo to kill the enemy without switching weapons
 		if (required_hits <= expected_hits)
@@ -1073,12 +1054,12 @@ int BotTargetWeapon(bot_state_t *bs)
 			// Calculate the number of shots required to get enough hits
 			// and the number of weapon fires to unload this many shots
 			//
-			// NOTE: This is not equivalent to ceil((required_hits * acc.shots) / (hits * ws->shots))
-			required_fires = ceil(ceil(required_hits * acc.shots / hits) / ws->shots);
+			// NOTE: This is not equivalent to ceil(required_hits / (shot_hit_rate * ws->shots))
+			required_fires = ceil(ceil(required_hits / shot_hit_rate) / ws->shots);
 
 			// Consider the the total time required to fire this many shots.  Don't
 			// count the last shot because the enemy will die before the weapon reloads.
-			time += weapon_stats[weapon].reload * (required_fires-1) / attack_rate;
+			time += (reload * required_fires / attack_rate) - reload;
 
 			// The bot will stop attacking once the enemy is dead
 			expected_hits = required_hits;
@@ -1088,7 +1069,7 @@ int BotTargetWeapon(bot_state_t *bs)
 		else
 		{
 			// Plan on emptying the gun of its ammo
-			time += ws->reload * reload_factor * ammo;
+			time += reload * ammo / attack_rate;
 
 			// After it runs out of ammo, it will have to switch weapons (possibly a seond time)
 			time += WEAPON_SWITCH_TIME;
@@ -1100,11 +1081,26 @@ int BotTargetWeapon(bot_state_t *bs)
 			total_damage = health;
 		damage_rate = total_damage / time;
 
-#ifdef DEBUG_AI
-		// Save this value for posterity's sake if it's for the current weapon
+		// Slightly favor the current weapon to avoid rampant weapon switches
+		//
+		// NOTE: This is in addition to the natural favoritism of the current
+		// weapon due to the time incurred changing weapons.  That penalty works
+		// well for situations where the target is low on health, but isn't
+		// sufficient when a weapon is really good in one situation and bad in
+		// another.  Someone could exploit a bot by constantly moving in and out
+		// of close range, making the bot want to switch between short and long
+		// range weapons.  This threshold discourages weapon switching to a more
+		// reasonable extent.
 		if (weapon == bs->weapon)
+		{
+#ifdef DEBUG_AI
+			// Save this value for posterity's sake
 			old_damage_rate = damage_rate;
 #endif
+
+			// Encourage the bot to continue using this weapon
+			damage_rate *= 1.1;
+		}
 
 		// Don't use this weapon if it has a worse damage rate than other considerations
 		if (damage_rate < best_damage_rate)
@@ -1220,40 +1216,4 @@ void BotBlastDamage(bot_state_t *bs, int weapon, vec3_t center, damage_multi_t *
 		if (blast->all.max < damage)
 			blast->all.max = damage;
 	}
-}
-
-/*
-========================
-BotWeaponExtraReloadTime
-
-Returns the amount of additional time the bot's weapon
-will have to wait to reload, beyond what the bot was
-expecting last AI frame.  The time is returned in seconds.
-========================
-*/
-float BotWeaponExtraReloadTime(bot_state_t *bs)
-{
-	int est_reload_ms, next_reload_ms;
-	float extra_reload_time;
-
-	// If the weapon is already reloaded, there is no additional time to be detected
-	if (bs->ps->weaponTime <= 0)
-		return 0.0;
-
-	// If the bot thought the weapon was reloaded last frame, it also thought it
-	// would be reloaded this frame
-	if (bs->last_reload_delay_ms <= 0)
-		est_reload_ms = server_time_ms + bs->last_reload_delay_ms;
-	else
-		est_reload_ms = bs->last_command_time_ms + bs->last_reload_delay_ms;
-
-	// Figure out when the weapon will actually reload
-	next_reload_ms = server_time_ms + bs->ps->weaponTime;
-
-	// Check how much additional reload time the bot's weapon accrued since the last update
-	extra_reload_time = (next_reload_ms - est_reload_ms) * 0.001;
-	if (extra_reload_time <= 0.0)
-		return 0.0;
-
-	return extra_reload_time;
 }

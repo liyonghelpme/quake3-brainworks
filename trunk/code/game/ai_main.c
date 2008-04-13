@@ -268,7 +268,7 @@ void BotInterbreedEndMatch()
 // there is only one such debug code (use_weapon) which is handled
 // through special cases.  It's not worth the effort of writing all
 // the handling code for just it, but that could change in the future.
-#define NUM_BOT_DEBUG_ENTRIES 23
+#define NUM_BOT_DEBUG_ENTRIES 24
 entry_string_int_t bot_debug_entries[ NUM_BOT_DEBUG_ENTRIES ] =
 {
 	{ "info_accstats",			BOT_DEBUG_INFO_ACCSTATS			},
@@ -277,6 +277,7 @@ entry_string_int_t bot_debug_entries[ NUM_BOT_DEBUG_ENTRIES ] =
 	{ "info_awareness",			BOT_DEBUG_INFO_AWARENESS		},
 	{ "info_dodge",				BOT_DEBUG_INFO_DODGE			},
 	{ "info_enemy",				BOT_DEBUG_INFO_ENEMY			},
+	{ "info_firestats",			BOT_DEBUG_INFO_FIRESTATS		},
 	{ "info_goal",				BOT_DEBUG_INFO_GOAL				},
 	{ "info_item",				BOT_DEBUG_INFO_ITEM				},
 	{ "info_item_reason",		BOT_DEBUG_INFO_ITEM_REASON		},

@@ -96,31 +96,32 @@ typedef struct bot_state_s bot_state_t;
 // Debugging flags that change bot behavior or provide output when turned on
 
 	// Informative
-#define BOT_DEBUG_INFO_AIM				0x00000001	// Aim selection
-#define BOT_DEBUG_INFO_ACCSTATS			0x00000002	// Cumulative weapon accuracy statistics
-#define BOT_DEBUG_INFO_ACCURACY			0x00000004	// Tracking of weapon accuracy
+#define BOT_DEBUG_INFO_ACCSTATS			0x00000001	// Cumulative weapon accuracy statistics
+#define BOT_DEBUG_INFO_ACCURACY			0x00000002	// Tracking of weapon accuracy
+#define BOT_DEBUG_INFO_AIM				0x00000004	// Aim selection
 #define BOT_DEBUG_INFO_AWARENESS		0x00000008	// Awareness of enemy entities
 #define BOT_DEBUG_INFO_DODGE			0x00000010	// Dodge selection
 #define BOT_DEBUG_INFO_ENEMY			0x00000020	// Enemy selection
-#define BOT_DEBUG_INFO_GOAL				0x00000040	// Goal selection
-#define BOT_DEBUG_INFO_ITEM				0x00000080	// Item selection
-#define BOT_DEBUG_INFO_ITEM_REASON		0x00000100	// Reason for item selection
-#define BOT_DEBUG_INFO_PATH				0x00000200	// Path planning for obstacle avoidance
-#define BOT_DEBUG_INFO_SCAN				0x00000400	// Scanning of surrounding entities
-#define BOT_DEBUG_INFO_TIMED_ITEM		0x00000800	// Timed item selection and tracking
-#define BOT_DEBUG_INFO_WEAPON			0x00001000	// Weapon selection
-#define BOT_DEBUG_INFO_SHOOT			0x00002000	// Whether and why the bot shoots
+#define BOT_DEBUG_INFO_FIRESTATS		0x00000040	// Cumulative weapon fire rate statistics
+#define BOT_DEBUG_INFO_GOAL				0x00000080	// Goal selection
+#define BOT_DEBUG_INFO_ITEM				0x00000100	// Item selection
+#define BOT_DEBUG_INFO_ITEM_REASON		0x00000200	// Reason for item selection
+#define BOT_DEBUG_INFO_PATH				0x00000400	// Path planning for obstacle avoidance
+#define BOT_DEBUG_INFO_SCAN				0x00000800	// Scanning of surrounding entities
+#define BOT_DEBUG_INFO_TIMED_ITEM		0x00001000	// Timed item selection and tracking
+#define BOT_DEBUG_INFO_WEAPON			0x00002000	// Weapon selection
+#define BOT_DEBUG_INFO_SHOOT			0x00004000	// Whether and why the bot shoots
 
 	// Behavioral
-#define BOT_DEBUG_MAKE_DODGE_STOP		0x00004000	// Stop dodging when moving
-#define BOT_DEBUG_MAKE_ITEM_STOP		0x00008000	// Stop selecting items to pick up
-#define BOT_DEBUG_MAKE_MOVE_STOP		0x00010000	// Stop moving
-#define BOT_DEBUG_MAKE_SHOOT_ALWAYS		0x00020000	// Always shoot
-#define BOT_DEBUG_MAKE_SHOOT_STOP		0x00040000	// Stop shooting
-#define BOT_DEBUG_MAKE_SKILL_STANDARD	0x00080000	// Fix weapon skill and accuracy
-#define BOT_DEBUG_MAKE_STRAFEJUMP_STOP	0x00100000	// Stop strafe jumping when moving
-#define BOT_DEBUG_MAKE_VIEW_FLAWLESS	0x00200000	// Incur no error when changing view
-#define BOT_DEBUG_MAKE_VIEW_PERFECT		0x00400000	// Always look in the ideal direction
+#define BOT_DEBUG_MAKE_DODGE_STOP		0x00008000	// Stop dodging when moving
+#define BOT_DEBUG_MAKE_ITEM_STOP		0x00010000	// Stop selecting items to pick up
+#define BOT_DEBUG_MAKE_MOVE_STOP		0x00020000	// Stop moving
+#define BOT_DEBUG_MAKE_SHOOT_ALWAYS		0x00040000	// Always shoot
+#define BOT_DEBUG_MAKE_SHOOT_STOP		0x00080000	// Stop shooting
+#define BOT_DEBUG_MAKE_SKILL_STANDARD	0x00100000	// Fix weapon skill and accuracy
+#define BOT_DEBUG_MAKE_STRAFEJUMP_STOP	0x00200000	// Stop strafe jumping when moving
+#define BOT_DEBUG_MAKE_VIEW_FLAWLESS	0x00400000	// Incur no error when changing view
+#define BOT_DEBUG_MAKE_VIEW_PERFECT		0x00800000	// Always look in the ideal direction
 
 #endif
 
@@ -255,7 +256,7 @@ typedef struct region_s
 // Statistical history data used to predict things
 typedef struct history_s
 {
-	float actual;			// Actual number of times an event occured
+	float actual;			// Actual number of times an event occurred
 	float potential;		// Potential chances the event had to occur
 } history_t;
 
@@ -469,10 +470,11 @@ typedef struct bot_accuracy_s
 	float time;				// Total time (in seconds) spent firing these shots
 	hits_damage_t direct;	// Statistics about direct hits
 	hits_damage_t splash;	// Statistics about splash hits
+	history_t attack_rate;	// Potential and actual seconds of fire time taken
 } bot_accuracy_t;
 
 // How much padding to add to accuracy records without a lot of data
-#define ACCURACY_DEFAULT_TIME		18.0
+#define ACCURACY_DEFAULT_TIME		8.0
 
 // Maximum number of proximity mines and other missiles the bot can track
 #define MAX_PROXMINES				32
@@ -1325,8 +1327,13 @@ struct bot_state_s
 								[ZCP_NUM_IDS];
 	bot_accuracy_t acc_weapon[WP_NUM_WEAPONS];	// Stats for each weapon (sum over all zones)
 
-	history_t attack_rate[WP_NUM_WEAPONS];		// Historical data of how often the bot shot at its target
-	float attack_rate_update_time;				// Last server time the attack rate data was updated
+	float weapon_analysis_time;		// The bot has analyzed the firing and accuracy of its weapon
+									// up until this server time.
+									//
+									// NOTE: This will be a time in the future when the bot attacks.
+									// If the bot fired at time T and incurred 1 second of reload,
+									// then at the next server frame T + 0.05, the bot will have
+									// analyzed through time T+1.
 
 	bot_missile_shot_t own_missiles[MAX_MISSILE_SHOT];	// Information about missiles this bot shot.
 														// used for accuracy tracking.  This list

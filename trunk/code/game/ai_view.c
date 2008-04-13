@@ -20,7 +20,7 @@
 // NOTE: This value looks similar to bs->react_time, the basic reaction time
 // which is in the .1 to .3 second range.  It is NOT used the same way, however.
 // This value is used to smooth potential rapid changes in the view state, so
-// the bot doesn't accidentally detect many more changes than actually occured.
+// the bot doesn't accidentally detect many more changes than actually occurred.
 // Lowering this value for higher skilled bots would actually make them perform
 // worse if their reaction time were low enough.  This isn't "reaction" in the
 // sense of the word used elsewhere in this code.
@@ -298,7 +298,7 @@ void BotViewIdealErrorSelect(bot_state_t *bs)
 		//
 		// NOTE: The last frame's error factor currently isn't used, but it could be.
 		// It's updated at the same time given the logic, "This is what the error factor
-		// would have been if a notable ideal view shift hadn't occured."
+		// would have been if a notable ideal view shift hadn't occurred."
 		bs->view_ideal_last[i].error_factor =
 		bs->view_ideal_next[i].error_factor = crandom() * max_error;
 	}
@@ -423,7 +423,7 @@ ViewSpeedsChanged
 This function accepts inputs of the old angular
 speeds for pitch and yaw and updated new speeds.
 It checks for each axis whether a significant speed
-change occured and returns a bitmap of the results.
+change occurred and returns a bitmap of the results.
 In particular, (1<<PITCH) will be true if change was
 detected and false if not.  The (1<<YAW) bit is set
 similarly.
@@ -556,7 +556,7 @@ point."view_time" is the timestamp of the inputted angle,
 fully adjust to a change in view states. The "changed" integer
 is zero if there is nothing unexpected about this update,
 positive if the target changed in an unexpected way, and
-negative if a reset occured (ie. the bot decided to aim at a
+negative if a reset occurred (ie. the bot decided to aim at a
 totally different target from last frame).
 
 In addition to differentially computed angular speed and
@@ -798,17 +798,17 @@ void BotViewIdealUpdate(bot_state_t *bs, vec3_t view_angles, vec3_t view_speeds,
 	if (!ref_angles)
 		ref_angles = view_angles;
 
-	// Remember that a view reset occured this command frame if necessary ...
+	// Remember that a view reset occurred this command frame if necessary ...
 	if (changes < 0)
 	{
-		// This is when a reset last occured
+		// This is when a reset last occurred
 		bs->view_ideal_reset_time = bs->command_time;
 
 		// Reset the error correction time to the last processed server frame
 		bs->view_ideal_error_time = server_time;
 	}
 
-	// ... Otherwise ignore changes that occured too soon after another change
+	// ... Otherwise ignore changes that occurred too soon after another change
 	else
 	{
 		for (i = PITCH; i <= YAW; i++)
@@ -821,7 +821,7 @@ void BotViewIdealUpdate(bot_state_t *bs, vec3_t view_angles, vec3_t view_speeds,
 	// Update the interpolated view state independantly for each axis
 	for (i = PITCH; i <= YAW; i++)
 	{
-		// Determine what kind of change occured on this axis (1 for unpredicted
+		// Determine what kind of change occurred on this axis (1 for unpredicted
 		// change, -1 for view reset, 0 for no change)
 		if (changes < 0)
 			change = -1;
