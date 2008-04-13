@@ -1047,7 +1047,7 @@ map_set
 Sets the inputted key to have the inputted data value.
 If "value" is NULL, the entry will be removed from the
 table instead.  Returns a non-zero value if the entry
-was successfully set and 0 if an error occured.  (This
+was successfully set and 0 if an error occurred.  (This
 probably means the table is already at capacity so a
 new entry cannot be added.)
 =======

@@ -11,6 +11,7 @@
 #include "ai_vars.h"
 #include "ai_resource.h"
 
+#include "ai_accuracy.h"
 #include "ai_client.h"
 #include "ai_item.h"
 #include "ai_weapon.h"
@@ -583,15 +584,15 @@ void PlayInfoFromBot(play_info_t *pi, bot_state_t *bs)
 	// Determine expected reload and damage rates for each weapon
 	for (weapon = 0; weapon < WP_NUM_WEAPONS; weapon++)
 	{
-		// Compute how frequently the bot fires this weapon when in combat
-		ws = &weapon_stats[weapon];
-		pi->reload[weapon] = ws->reload * BotWeaponAttackRate(bs, weapon);
-
 		// Extract average damage dealt per weapon fire
 		// NOTE: ws->shots is the number of shots per firing.  acc.shots is the
 		// total number of shots recorded.
+		ws = &weapon_stats[weapon];
 		BotAccuracyRead(bs, &acc, weapon, NULL);
 		pi->dealt[weapon] = (acc.direct.damage + acc.splash.damage) * ws->shots / acc.shots;
+
+		// Compute how frequently the bot fires this weapon when in combat
+		pi->reload[weapon] = ws->reload * BotAttackRate(bs, &acc);
 
 		// Compute the chance a firing of this weapon will not be the killing shot
 		survive_chance = 1.0 - (pi->kills_per_damage * pi->dealt[weapon]);
@@ -1285,7 +1286,7 @@ ResourceItemChange
 
 Recomputes some internal data, if necessary, after
 picking up an item changes the resource state.
-"result" is a bitmap of what changes occured.  The
+"result" is a bitmap of what changes occurred.  The
 "old_health" and "old_armor" values refer to the
 health and armor before the item pickup.
 

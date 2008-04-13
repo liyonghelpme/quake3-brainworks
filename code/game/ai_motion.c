@@ -624,7 +624,7 @@ void BotAIMotionUpdate(void)
 		EntityMotionHistoryUpdate(&g_entities[i]);
 
 #ifdef DEBUG_AI
-	// Check for motion state predictions whose reality has occured
+	// Check for motion state predictions whose reality has occurred
 	//
 	// NOTE: This occurs before updating because it's possible this
 	PredictDebugCheck();

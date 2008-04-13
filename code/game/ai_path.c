@@ -825,7 +825,7 @@ ai_obstacle_t *BotPathObstacle(bot_state_t *bs, int *max_areas, int *max_time,
 		if (route.stopevent == RSE_NONE)
 			return NULL;
 
-		// If the route wasn't stopped by a mover, an internal error occured
+		// If the route wasn't stopped by a mover, an internal error occurred
 		// NOTE: This should never occur
 		if ( !(route.stopevent & RSE_ENTERCONTENTS) ||
 			 !(route.endcontents & AREACONTENTS_MOVER) )

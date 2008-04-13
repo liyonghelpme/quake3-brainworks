@@ -567,7 +567,7 @@ void BotScanForEnemy(bot_state_t *bs, entity_scan_t *ent_scan, bot_scan_t *scan)
 	// If the entity isn't currently in sight, note that ...
 	if (!in_fov)
 		aware->sighted = -1.0;
-	// ... Also note when the entity was first sighted if that occured now
+	// ... Also note when the entity was first sighted if that occurred now
 	else if (aware->sighted <= 0.0)
 		aware->sighted = bs->command_time;
 

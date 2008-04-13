@@ -202,7 +202,7 @@ int BotAimLocChangeDetect(bot_state_t *bs, vec3_t aim_loc)
 
 		// Assume no change in speed for updates in the same frame
 		//
-		// NOTE: Yes, it's possible a change occured but actually
+		// NOTE: Yes, it's possible a change occurred but actually
 		// tracking it is way more effort than it's worth.
 		if (time_change <= 0.0)
 			new_speeds[i] = bs->view_ideal_speeds_fixed[i];
@@ -217,7 +217,7 @@ int BotAimLocChangeDetect(bot_state_t *bs, vec3_t aim_loc)
 	// Store the last recorded view speeds so they can be used next frame
 	VectorCopy(new_speeds, bs->view_ideal_speeds_fixed);
 
-	// If a reset occured last frame, don't detect any changes because
+	// If a reset occurred last frame, don't detect any changes because
 	// last frame's speeds were probably inaccurate ...
 	if (server_time <= bs->view_ideal_reset_time)
 		return 0x0000;

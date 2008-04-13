@@ -21,6 +21,9 @@ float pitch_zone_center[ZCP_NUM_IDS] = { -ZCP_LOW, 0, ZCP_LOW };
 // Default accuracy statistics for each weapon
 bot_accuracy_t acc_default_weapon[WP_NUM_WEAPONS];
 
+// Default accuracy statistics for each weapon in each combat zone
+bot_accuracy_t acc_default_weap_zone[WP_NUM_WEAPONS][ZCD_NUM_IDS][ZCP_NUM_IDS];
+
 
 /*
 ==============
@@ -32,7 +35,8 @@ this would be a constructor.
 ==============
 */
 void AccuracyCreate(bot_accuracy_t *acc, int weapon, float shots,
-					float direct_hits, float splash_hits, float total_splash_damage)
+					float direct_hits, float splash_hits, float total_splash_damage,
+					float actual_fire_time, float potential_fire_time)
 {
 	weapon_stats_t *ws;
 
@@ -52,10 +56,12 @@ void AccuracyCreate(bot_accuracy_t *acc, int weapon, float shots,
 	// must be supplied by the caller.  If a mod creates a weapon which has variable
 	// damage (often but not always a bad game design idea), then this function will
 	// need to be reworked to accept a total direct damage argument as well.
-	acc->direct.hits   = direct_hits;
-	acc->direct.damage = direct_hits * ws->damage;
-	acc->splash.hits   = splash_hits;
-	acc->splash.damage = total_splash_damage;
+	acc->direct.hits           = direct_hits;
+	acc->direct.damage         = direct_hits * ws->damage;
+	acc->splash.hits           = splash_hits;
+	acc->splash.damage         = total_splash_damage;
+	acc->attack_rate.actual    = actual_fire_time;
+	acc->attack_rate.potential = potential_fire_time;
 }
 
 /*
@@ -68,12 +74,14 @@ the total record.
 */
 void AccuracyTally(bot_accuracy_t *total, bot_accuracy_t *acc)
 {
-	total->shots         += acc->shots;
-	total->time          += acc->time;
-	total->direct.hits   += acc->direct.hits;
-	total->direct.damage += acc->direct.damage;
-	total->splash.hits   += acc->splash.hits;
-	total->splash.damage += acc->splash.damage;
+	total->shots                 += acc->shots;
+	total->time                  += acc->time;
+	total->direct.hits           += acc->direct.hits;
+	total->direct.damage         += acc->direct.damage;
+	total->splash.hits           += acc->splash.hits;
+	total->splash.damage         += acc->splash.damage;
+	total->attack_rate.actual    += acc->attack_rate.actual;
+	total->attack_rate.potential += acc->attack_rate.potential;
 }
 
 /*
@@ -88,13 +96,64 @@ to the result record.
 */
 bot_accuracy_t *AccuracyScale(bot_accuracy_t *acc, float scale, bot_accuracy_t *result)
 {
-	result->shots         = scale * acc->shots;
-	result->time          = scale * acc->time;
-	result->direct.hits   = scale * acc->direct.hits;
-	result->direct.damage = scale * acc->direct.damage;
-	result->splash.hits   = scale * acc->splash.hits;
-	result->splash.damage = scale * acc->splash.damage;
+	result->shots                 = scale * acc->shots;
+	result->time                  = scale * acc->time;
+	result->direct.hits           = scale * acc->direct.hits;
+	result->direct.damage         = scale * acc->direct.damage;
+	result->splash.hits           = scale * acc->splash.hits;
+	result->splash.damage         = scale * acc->splash.damage;
+	result->attack_rate.actual    = scale * acc->attack_rate.actual;
+	result->attack_rate.potential = scale * acc->attack_rate.potential;
 
+	return result;
+}
+
+/*
+===================
+AccuracyZoneAverage
+
+Given a weapon and combat zone description, computes the accuracy
+record that's the weighted average as described by that zone and
+stores it (result).  Uses the bot's known accuracy data if a non-null
+bot pointer was supplied.  Otherwise uses the default accuracy data.
+Returns a pointer to the result structure if you're into that kind of thing.
+
+NOTE: This is one of the few functions that works even with a null
+bot state pointer.  That kind of uniqueness makes me think something is
+wrong and the function should be structured differently.  However, the
+compiler really doesn't like passing in arguments like
+  bs->acc_weap_zone[weapon]
+because of how that array is internally stored.
+===================
+*/
+bot_accuracy_t *AccuracyZoneAverage(bot_state_t *bs, int weapon, combat_zone_t *zone,
+									bot_accuracy_t *result)
+{
+	int i;
+	float time;
+	zone_center_t *center;
+	bot_accuracy_t scaled;
+
+	// Reset the contents of the output accuracy before tallying data from zone centers
+	memset(result, 0, sizeof(bot_accuracy_t));
+
+	// Use a portion from each zone center accuracy record
+	for (i = 0; i < zone->num_centers; i++)
+	{
+		// Look up the accuracy record associated with the current combat zone center
+		center = &zone->center[i];
+
+		// Add a fraction of this accuracy record to the output total
+		if (bs)
+			AccuracyScale(&bs->acc_weap_zone[weapon][center->dist][center->pitch],
+						  zone->weight[i], &scaled);
+		else
+			AccuracyScale(&acc_default_weap_zone[weapon][center->dist][center->pitch],
+						  zone->weight[i], &scaled);
+		AccuracyTally(result, &scaled);
+	}
+
+	// Make functional programmers happy
 	return result;
 }
 
@@ -246,6 +305,167 @@ void CombatZoneInvert(combat_zone_t *source, combat_zone_t *inverted)
 }
 
 /*
+========================
+BotWeaponExtraReloadTime
+
+Returns the amount of additional time the bot's weapon
+will have to wait to reload, beyond what the bot was
+expecting last AI frame.  The time is returned in seconds.
+========================
+*/
+float BotWeaponExtraReloadTime(bot_state_t *bs)
+{
+	int est_reload_ms, next_reload_ms;
+	float extra_reload_time;
+
+	// If the weapon is already reloaded, there is no additional time to be detected
+	if (bs->ps->weaponTime <= 0)
+		return 0.0;
+
+	// If the bot thought the weapon was reloaded last frame, it also thought it
+	// would be reloaded this frame
+	if (bs->last_reload_delay_ms <= 0)
+		est_reload_ms = server_time_ms + bs->last_reload_delay_ms;
+	else
+		est_reload_ms = bs->last_command_time_ms + bs->last_reload_delay_ms;
+
+	// Figure out when the weapon will actually reload
+	next_reload_ms = server_time_ms + bs->ps->weaponTime;
+
+	// Check how much additional reload time the bot's weapon accrued since the last update
+	extra_reload_time = (next_reload_ms - est_reload_ms) * 0.001;
+	if (extra_reload_time <= 0.0)
+		return 0.0;
+
+	return extra_reload_time;
+}
+
+/*
+=================
+BotWeaponFireTime
+
+Computes the additional amount of time spent firing beyond what
+the bot was expecting last AI frame.  Also computes the amount of
+time that could have been spent firing.  The times are computed
+in seconds.
+=================
+*/
+void BotWeaponFireTime(bot_state_t *bs, history_t *fire_time)
+{
+	int weapon;
+
+	// Determine how much time has elapsed since the last analysis
+	//
+	// NOTE: This bound check is not redundant.  The analysis time
+	// will refer to a point in the future when the bot analyzes the
+	// reload time for a shot.  A 1 second reload incurred at time T
+	// will cause this code to finish its analysis for time T+1.
+	fire_time->potential = server_time - bs->weapon_analysis_time;
+	if (fire_time->potential < 0.0)
+		fire_time->potential = 0.0;
+
+	// Determine how much additional weapon reload time has not
+	// been accounted for
+	fire_time->actual = BotWeaponExtraReloadTime(bs);
+
+	// If the bot incurred a reload longer than the actual amount of
+	// time elapsed, consider all that time analyzed
+	if (fire_time->potential < fire_time->actual)
+		fire_time->potential = fire_time->actual;
+
+	// Find out what weapon the bot used last server frame
+	//
+	// NOTE: Accuracy data must check the bot's current weapon (bs->ps->weapon),
+	// not the bot's selected weapon (bs->weapon).
+	weapon = bs->ps->weapon;
+	if (weapon <= WP_NONE || weapon >= WP_NUM_WEAPONS)
+		weapon = WP_NONE;
+
+	// Incur fire time for melee weapons that didn't officially reload
+	// (since melee weapons don't reload unless they hit), assuming
+	// the weapon was actually firing
+	//
+	// NOTE: This intentially checks the bot's currently equipped weapon,
+	// not the selected weapon (which is bs->weapon)
+	if (fire_time->actual < fire_time->potential &&
+		(weapon_stats[weapon].flags & WSF_MELEE) &&
+		(bs->ent->client->pers.cmd.buttons & BUTTON_ATTACK))
+	{
+		fire_time->actual = fire_time->potential;
+	}
+
+	// Account for the time analyzed
+	bs->weapon_analysis_time += fire_time->potential;
+
+	// There are a number of reasons this reload time is not fire time:
+	//
+	// - The bot is not holding a real weapon
+	// - The bot is changing weapons
+	// - The bot wasn't aiming at an enemy
+	// - The bot died
+	// - Ignore perceived shots when the bot just used an item
+	//
+	// See the NOTEs below for more detailed descriptions of what bugs
+	// in the server require this logic.
+	if ( (weapon == WP_NONE) ||
+		 (BotWeaponChanging(bs)) ||
+		 (!bs->aim_enemy) ||
+		 (BotIsDead(bs)) ||
+		 (bs->ps->pm_flags & PMF_USE_ITEM_HELD) )
+	{
+		fire_time->actual = 0.0;
+		fire_time->potential = 0.0;
+	}
+
+	// Never update when dead:
+	//
+	// NOTE: It's theoretically possible to record accuracy data when the
+	// bot is dead.  If the bot dies the same frame it tried to shoot,
+	// it will be dead now, but still might have gotten a shot off (and
+	// maybe hit).  Unfortunately, a bug in the Quake 3 server code prevents
+	// this from being easily done.
+	//
+	// This is because Quake 3 updates each player in order, first moving
+	// the player and then shooting.  So if a bot with client number 1 is
+	// killed by client 0, the bot won't get to shoot-- it will be dead
+	// before it's ClientThink() executes.  (And because of another bug in
+	// PM_Weapon() in bg_pmove.c, the bot's ps->weaponTime value will not
+	// decrease, so it appears as if another shot has been taken by the
+	// dead bot.)  But if the bot is killed by client 2, the bot will still
+	// have gotten the shot off, and in theory the accuracy data could be
+	// tracked.  Some extra effort is needed, however, because the bot's
+	// current weapon (bs->ps->weapon) will be set to WP_NONE, even though
+	// the shot would have been made with the old weapon, presumably
+	// bs->weapon.  But most of the time bs->ps->weapon should be used
+	// (see below).
+	//
+	// Unfortunately, the only way to track this is to check who killed
+	// the bot and compare client numbers.  And there's still the issue
+	// of ps->weaponTime not being effectively updated.  (Usually the bug
+	// causes a 50ms accrual difference, but this value could be larger
+	// if the server was processor lagged, so the value is unpredictable.)
+	//
+	// NOTE: These issues only apply to instant hit weapons, which can only
+	// be detected by their reload times.  The bot tracks accuracy data for
+	// missiles in BotTrackMissileShot() in ai_scan.c.
+	//
+	// FIXME: The game server should really reset ent->ps.weaponTime when a
+	// player dies.
+
+
+	// Ignore extra reload time when the bot uses an item
+	//
+	// NOTE: A bug in PM_Weapon() in bg_pmove.c causes the code to not decay
+	// bs->ps->weaponTime if the player uses an item.  This is perceived by the
+	// AI code as an time increase, which could be inappropriately be read as a
+	// shot.  As such, all shots read when the bot uses an item are ignored.
+	// Incidently, players are not allowed to use a holdable item and shoot at
+	// the same time
+	//
+	// FIXME: Someone at id Software should fix this server bug.
+}
+
+/*
 ===============
 BotAccuracyRead
 
@@ -262,32 +482,14 @@ void BotAccuracyRead(bot_state_t *bs, bot_accuracy_t *acc, int weapon, combat_zo
 	int i;
 	float time;
 	zone_center_t *center;
-	bot_accuracy_t scaled;
+	bot_accuracy_t default_acc;
 
 	// Average over the specified zones if zone data was supplied ...
 	if (zone)
-	{
-		// Reset the contents of the output accuracy before tallying data from zone centers
-		memset(acc, 0, sizeof(bot_accuracy_t));
-
-		// Use a portion from each zone center accuracy record
-		for (i = 0; i < zone->num_centers; i++)
-		{
-			// Look up the accuracy record associated with the current combat zone center
-			center = &zone->center[i];
-
-			// Add a fraction of this accuracy record to the output total
-			AccuracyScale(&bs->acc_weap_zone[weapon][center->dist][center->pitch],
-						  zone->weight[i], &scaled);
-			AccuracyTally(acc, &scaled);
-		}
-	}
-
+		AccuracyZoneAverage(bs, weapon, zone, acc);
 	// ... Otherwise just read the appropriate weapon data
 	else
-	{
 		memcpy(acc, &bs->acc_weapon[weapon], sizeof(bot_accuracy_t));
-	}
 
 	// Check if default data must get added
 	time = ACCURACY_DEFAULT_TIME - acc->time;
@@ -296,16 +498,22 @@ void BotAccuracyRead(bot_state_t *bs, bot_accuracy_t *acc, int weapon, combat_zo
 
 	// The default data only applies for weapons in range;
 	// Add time but no extra hits or damage for out of range weapons
-	if (WeaponInRange(weapon, zone->dist))
-	{
-		// Add that many seconds of default data to the input record
-		AccuracyScale(&acc_default_weapon[weapon], time, &scaled);
-		AccuracyTally(acc, &scaled);
-	}
-	else
+	if (!WeaponInRange(weapon, zone->dist))
 	{
 		acc->time = time;
+		return;
 	}
+
+	// Use a portion of each default accuracy zone center if specified ...
+	if (zone)
+		AccuracyZoneAverage(NULL, weapon, zone, &default_acc);
+	// .. Otherwise just read the default weapon data
+	else
+		memcpy(&default_acc, &acc_default_weapon[weapon], sizeof(bot_accuracy_t));
+
+	// Add that many seconds of default data to the input record
+	AccuracyScale(&default_acc, time, &default_acc);
+	AccuracyTally(acc, &default_acc);
 }
 
 #ifdef DEBUG_AI
@@ -323,7 +531,7 @@ void PrintWeaponAccInfo(bot_state_t *bs, int weapon)
 	char *level_name;
 
 	// Print a nice header explaining the table layout
-	G_Printf("%.2f %s %s:  Near,  Mid,  Far, Very Far\n",
+	G_Printf("%.2f %s %s ^4Accuracy^7:  Near,  Mid,  Far, Very Far\n",
 			 server_time, EntityNameFast(bs->ent), WeaponName(weapon));
 
 	// Compute and print out the actual percentage of potential damage dealt
@@ -379,6 +587,67 @@ void PrintWeaponAccInfo(bot_state_t *bs, int weapon)
 
 	G_Printf("\n");
 }
+
+/*
+===================
+PrintWeaponFireInfo
+
+NOTE: If this were C++, this function would be merged
+with PrintWeaponAccInfo() and the call syntax would require
+data accessor functions for potential and actual values.
+I suppose you can do that in C as well, but it's much
+more of a pain without a class-based infrastructure.
+===================
+*/
+void PrintWeaponFireInfo(bot_state_t *bs, int weapon)
+{
+	int pitch, dist;
+	float actual, potential;
+	bot_accuracy_t *acc;
+	char *level_name;
+
+	// Print a nice header explaining the table layout
+	G_Printf("%.2f %s %s ^1Firing^7:  Near,  Mid,  Far, Very Far\n",
+			 server_time, EntityNameFast(bs->ent), WeaponName(weapon));
+
+	// Compute and print out the actual percentage of potential firing time
+	// for each pitch and distance zone center
+	for (pitch = 0; pitch < ZCP_NUM_IDS; pitch++)
+	{
+		// Get a name for this level
+		switch (pitch)
+		{
+			default:
+			case ZCP_ID_LOW:	level_name = "  Low";	break;
+			case ZCP_ID_LEVEL:	level_name = "Level";	break;
+			case ZCP_ID_HIGH:	level_name = " High";	break;
+		}
+
+		// Print the level name and each distance accuracy for that level
+		G_Printf(" %s:", level_name);
+		for (dist = 0; dist < ZCD_NUM_IDS; dist++)
+		{
+			// Determine the actual time spent firing and the maximum potential fire time
+			acc = &bs->acc_weap_zone[weapon][dist][pitch];
+			actual = acc->attack_rate.actual;
+			potential = acc->attack_rate.potential;
+
+			// Print accuracy data, avoiding divides by zero
+			if (potential > 0)
+				G_Printf(" %2.f%%", 100 * actual / potential);
+			else
+				G_Printf(" ??%%");
+
+			// Also print the time spent acquiring the data and a seaparator
+			G_Printf(" (%3.2f)", potential);
+			if (dist < ZCD_NUM_IDS-1)
+				G_Printf(", ");
+		}
+		G_Printf("\n");
+	}
+
+	G_Printf("\n");
+}
 #endif
 
 /*
@@ -398,12 +667,6 @@ void BotAccuracyRecord(bot_state_t *bs, bot_accuracy_t *acc, int weapon, combat_
 	float direct_acc, splash_acc, splash_damage, misses;
 	char *direct_name, *separate;
 #endif
-
-	// Ignore non-updates
-	// NOTE: Technically this function shouldn't even be called in this
-	// case, but it's good to check anyway.
-	if (!acc->shots)
-		return;
 
 	// Add this to the total damage the bot has dealt
 	bs->damage_dealt += acc->direct.damage + acc->splash.damage;
@@ -426,6 +689,10 @@ void BotAccuracyRecord(bot_state_t *bs, bot_accuracy_t *acc, int weapon, combat_
 	// Print accuracy statistics when requested
 	if (bs->debug_flags & BOT_DEBUG_INFO_ACCSTATS)
 		PrintWeaponAccInfo(bs, weapon);
+
+	// Print firing statistics when requested
+	if (bs->debug_flags & BOT_DEBUG_INFO_FIRESTATS)
+		PrintWeaponFireInfo(bs, weapon);
 
 	// Only give accuracy debug messages when requested
 	if ( !(bs->debug_flags & BOT_DEBUG_INFO_ACCURACY) )
@@ -511,60 +778,9 @@ be worth resetting them or toning them down somehow.
 void BotAccuracyReset(bot_state_t *bs)
 {
 	// Reset all of the bot's accuracy tracking data
-	bs->attack_rate_update_time = server_time;
-	memset(&bs->attack_rate,   0, sizeof(bs->attack_rate));
+	bs->weapon_analysis_time = server_time;
 	memset(&bs->acc_weap_zone, 0, sizeof(bs->acc_weap_zone));
 	memset(&bs->acc_weapon,    0, sizeof(bs->acc_weapon));
-}
-
-/*
-===================
-BotAttackTimeUpdate
-
-This function updates the bot's internal records
-of what percent of the time it spent attacking its
-target among all opportunities for attacking.
-===================
-*/
-void BotAttackTimeUpdate(bot_state_t *bs, float extra_reload_time)
-{
-	float elapsed;
-	history_t *attack_rate;
-
-	// Determine how much time has elapsed since the last update
-	elapsed = server_time - bs->attack_rate_update_time;
-	bs->attack_rate_update_time = server_time;
-
-	// Update nothing if the bot had no enemy to shoot at last frame
-	if (!bs->aim_enemy)
-		return;
-
-	// Don't count update time from switching weapons
-	//
-	// NOTE: This doesn't necessarily mean the weapon is in the firing animation
-	// state.  The server code applies extra reload time to a "ready to attack"
-	// gauntlet while the player holds down the fire button.  That time needs
-	// to be counted here as attack time too.
-	if (BotWeaponChanging(bs))
-		return;
-
-	// Look up the history record for this weapon's attack rate
-	attack_rate = &bs->attack_rate[bs->ps->weapon];
-
-	// If the bot shot last frame, accrue potential and actual fire time
-	if (extra_reload_time > 0)
-	{
-		attack_rate->actual    += extra_reload_time;
-		attack_rate->potential += extra_reload_time;
-		return;
-	}
-
-	// Accrue no potential attack time if the weapon was not reloaded
-	if (bs->ps->weaponTime > 0)
-		return;
-
-	// Account for the potential attack time since the last update
-	attack_rate->potential += elapsed;
 }
 
 /*
@@ -604,7 +820,7 @@ int BotAccuracyUpdateMissile(bot_state_t *bs)
 		{
 
 			// Record this shot as a complete miss
-			AccuracyCreate(&acc, shot->weapon, 1, 0, 0, 0);
+			AccuracyCreate(&acc, shot->weapon, 1, 0, 0, 0, 0, 0);
 			BotAccuracyRecord(bs, &acc, shot->weapon, &shot->zone);
 
 			// Remove it from the list
@@ -669,15 +885,15 @@ int BotAccuracyUpdateMissile(bot_state_t *bs)
 
 		// First check for direct hits on an enemy
 		if (BotEnemyTeam(bs, target))
-			AccuracyCreate(&acc, shot->weapon, 1, 1, 0, 0);
+			AccuracyCreate(&acc, shot->weapon, 1, 1, 0, 0, 0, 0);
 
 		// Check for enemy blast damage as well
 		else if (blast.enemy.hits)
-			AccuracyCreate(&acc, shot->weapon, 1, 0, 1, blast.enemy.max);
+			AccuracyCreate(&acc, shot->weapon, 1, 0, 1, blast.enemy.max, 0, 0);
 
 		// The shot completely missed enemies
 		else
-			AccuracyCreate(&acc, shot->weapon, 1, 0, 0, 0);
+			AccuracyCreate(&acc, shot->weapon, 1, 0, 0, 0, 0, 0);
 
 		// Record this shot and remove it from the list
 		BotAccuracyRecord(bs, &acc, shot->weapon, &shot->zone);
@@ -692,155 +908,21 @@ int BotAccuracyUpdateMissile(bot_state_t *bs)
 }
 
 /*
-=========================
-BotAccuracyFireCountMelee
-
-Returns the number of times the bot's
-melee weapon fired this frame.
-=========================
-*/
-int BotAccuracyFireCountMelee(bot_state_t *bs, float extra_reload_time, float reload_rate)
-{
-	float update_time, fire_time, fires;
-
-	// Check when the server last processed commands from the bot
-	update_time = EntityTimestamp(bs->ent);
-
-	// Compute the amount of time spent firing since a melee shot was last recorded
-	//
-	// NOTE: Technically melee_time is the time at which the the weapon has reloaded
-	// or will reload for another shot.  If the bot recently got a hit with this
-	// melee weapon, the melee time will refer to a time in the future.
-	if (bs->melee_time > 0.0)
-	{
-		fire_time = update_time - bs->melee_time;
-		if (fire_time < 0.0)
-			fire_time = 0.0;
-	}
-	else
-	{
-		fire_time = 0.0;
-	}
-
-	// Compute the number of fires or fractions thereof
-	fires = fire_time / reload_rate;
-
-	// If the bot didn't attack with this melee weapon last frame, just do some cleanup
-	//
-	// NOTE: bs->ps->weaponstate only equals WEAPON_FIRING for melee
-	// weapons when the bot actually scores a hit, so this code must
-	// instead check if the server received an attack signal.
-	if ( !(bs->ent->client->pers.cmd.buttons & BUTTON_ATTACK) )
-	{
-		// If the bot wasn't previously firing, obviously no partial shots were taken
-		if (bs->melee_time <= 0.0)
-			return 0;
-
-		// The bot is no longer firing with its melee weapon
-		bs->melee_time = 0.0;
-
-		// Round off the amount of time spent firing to the nearest integer number of fires
-		return floor(fires + 0.5);
-	}
-
-	// If the bot's weapon required reloading and the weapon is in the firing state,
-	// immediately detect another weapon fire
-	if ( (extra_reload_time > 0.0) &&
-		 (bs->ps->weaponstate == WEAPON_FIRING) )
-	{
-		// The melee weapon will reload for another fire by this time
-		bs->melee_time = update_time + (bs->ps->weaponTime * 0.001);
-
-		// No matter how small the last time slice was, count it as a full fire
-		return ceil(fires);
-	}
-
-	// If the bot wasn't firing before, start tracking time spent firing from now
-	if (bs->melee_time <= 0.0)
-	{
-		bs->melee_time = update_time;
-		return 0;
-	}
-
-	// Check how many full frames of firing occured, if any
-	fires = floor(fires);
-	bs->melee_time += fires * reload_rate;
-	return fires;
-}
-
-/*
-===========================
-BotAccuracyFireCountHitscan
-
-Returns the number of times the bot's
-hitscan weapon fired this frame.
-===========================
-*/
-int BotAccuracyFireCountHitscan(bot_state_t *bs, float extra_reload_time, float reload_rate)
-{
-	// If the weapon isn't shooting, even if there is an increased in weapon
-	// reload time, the delay can't have come from a shot.  (It probably
-	// came from changing weapons.)
-	if (bs->ps->weaponstate != WEAPON_FIRING)
-		return 0;
-
-	// If no additional reload time was detected, the weapon could not have shot
-	if (extra_reload_time <= 0.0)
-		return 0;
-
-	// If the weapon is currently reloaded, no shots could have been taken
-	//
-	// NOTE: It *IS* possible for ps->weaponTime to be less than zero.  Some
-	// bugs in the game server can cause the weapon time to be negative (usually
-	// -34).  This in turn becomes "reload time credit" when the bot next fires
-	// its weapon, so rounding up is also important for this situation.  In
-	// theory this could cause inaccurate data for weapons that reload faster
-	// than 34 ms, like the Chaingun.
-	//
-	// Here is how the server might get a player with -34 ms weapon time.
-	// Normally bot server frames execute every 50 ms, so 50 ms of weapon
-	// time are deducted from bs->ps->weaponTime every frame.  But when a bot
-	// respawns, the server sends two 66 ms frames followed by one 18 ms
-	// frame (for a total of 150 ms over three frames).  It's possible for
-	// the bot to switch weapons after the first 66 ms frame but before the
-	// second.  Dropping the weapon takes 200 ms, so the weapon time, after
-	// the 18 ms frame, will be 200 - 66 - 18 = 116.  From then on, the bot's
-	// frames execute every 50 ms, so the weapon time decays to 66, 16, and
-	// finally -34 (where it stops dropping because the value is not positive).
-	// See PM_Weapon() in bg_pmove.c for more information.  This is not the
-	// first such bug in PM_Weapon(), incidently.
-	//
-	// Anyway, this function is carefully written to handle weird cases where
-	// the server added a fire frame to a negative reload time.  For example,
-	// if the reload time is -34 and the bot shoots the railgun, its reload time
-	// will be 1466, not 1500.  That's why the preceding code checks the
-	// extra reload time, not the official weapon time.
-	if (bs->ps->weaponTime <= 0)
-		return 0;
-
-	// Compute the number of fires taken in this time period
-	//
-	// NOTE: Technically this rounding shouldn't be necessary, but it's good to be careful.
-	return floor(extra_reload_time / reload_rate + 0.5);
-}
-
-/*
 =======================
 BotAccuracyUpdateWeapon
 
 Returns the number of hit counter ticks
 attributable to instant hit weapon fire.
 
-"extra_reload_time" is the number of
-additional seconds of weapon reload the bot
-detected since last time it processed
+"fire_time" is the actual and potential seconds
+of firing time the bot had since it last processed
 accuracies.
 
 "hits" is the number of unaccounted hits
 the bot detected last frame.
 =======================
 */
-void BotAccuracyUpdateWeapon(bot_state_t *bs, float extra_reload_time, int hits)
+void BotAccuracyUpdateWeapon(bot_state_t *bs, history_t *fire_time, int hits)
 {
 	int fires, shots, weapon;
 	float reload_rate;
@@ -848,114 +930,62 @@ void BotAccuracyUpdateWeapon(bot_state_t *bs, float extra_reload_time, int hits)
 	weapon_stats_t *ws;
 	qboolean melee;
 
-	// Never update when dead
-	//
-	// NOTE: It's theoretically possible to record accuracy data when the
-	// bot is dead.  If the bot dies the same frame it tried to shoot,
-	// it will be dead know, but still might have gotten a shot off (and
-	// maybe hit).  Unfortunately, a bug in the Quake 3 server code prevents
-	// this from being easily done.
-	//
-	// This is because Quake 3 updates each player in order, first moving
-	// the player and then shooting.  So if a bot with client number 1 is
-	// killed by client 0, the bot won't get to shoot-- it will be dead
-	// before it's ClientThink() executes.  (And because of another bug in
-	// PM_Weapon() in bg_pmove.c, the bot's ps->weaponTime value will not
-	// decrease, so it appears as if another shot has been taken by the
-	// dead bot.)  But if the bot is killed by client 2, the bot will still
-	// have gotten the shot off, and in theory the accuracy data could be
-	// tracked.  Some extra effort is needed, however, because the bot's
-	// current weapon (bs->ps->weapon) will be set to WP_NONE, even though
-	// the shot would have been made with the old weapon, presumably
-	// bs->weapon.  But most of the time bs->ps->weapon should be used
-	// (see below).
-	//
-	// Unfortunately, the only way to track this is to check who killed
-	// the bot and compare client numbers.  And there's still the issue
-	// of ps->weaponTime not being effectively updated.  (Usually the bug
-	// causes a 50ms accrual difference, but this value could be larger
-	// if the server was processor lagged, so the value is unpredictable.)
-	//
-	// NOTE: These issues only apply to instant hit weapons, which can only
-	// be detected by their reload times.  The bot tracks accuracy data for
-	// missiles in BotTrackMissileShot() in ai_scan.c.
-	//
-	// FIXME: The game server should really reset ent->ps.weaponTime when a
-	// player dies.
-	if (BotIsDead(bs))
+	// Do nothing if no actual opportunity to attack occurred
+	if (fire_time->potential <= 0.0)
 		return;
 
-	// Never update non-weapons
-	//
-	// NOTE: Accuracy data must check the bot's current weapon (bs->ps->weapon),
-	// not the bot's selected weapon (bs->weapon).
+	// Only compute accuracy data for instant hit weapons.
+	// Missile weapons aren't tracked here-- their accuracies can only be
+	// updated once the missile explodes.
 	weapon = bs->ps->weapon;
-	if (weapon <= WP_NONE || weapon >= WP_NUM_WEAPONS)
-		return;
-
-	// Never update missile weapons here-- their accuracies can only
-	// be updated once the missile explodes
 	ws = &weapon_stats[weapon];
-	if (ws->speed)
-		return;
+	if (!ws->speed)
+	{
+		// Look up the weapon's reload rate relative to the bot
+		//
+		// NOTE: The division by zero check shouldn't be necessary, but why take chances?
+		reload_rate = ws->reload;
+		if (bs->weapon_rate > 0.0)
+			reload_rate /= bs->weapon_rate;
 
-	// FIXME: If any instant-hit weapons dealt blast damage, code should be
-	// inserted here to estimate that using BotBlastDamage().  Unfortunately,
-	// there's currently no way to determine where an instant hit blast shot
-	// exploded.  (You can't use traces because it's possible it exploded on
-	// an entity that was killed by the blast.  It gets even worse when
-	// shooting a weapon with spread.)  So if anyone adds code for instant
-	// hit blast damage weapons, its their responsibility to define the
-	// interface that communicates the blast location to the client.  Once that
-	// interface is defined, code can be written to estimate blast damage.
+		// Check how many times the bot's weapon shot
+		//
+		// NOTE: This is intentially a floating point value.  Because of the dark
+		// voodoo that governs the (non-)firing of melee weapons, the accuracy data
+		// must track partial firings of the weapon whenever the fire button is held
+		// down but no target has been hit.
+		fires = fire_time->actual / reload_rate;
+		shots = fires * ws->shots;
 
+		// Sanity-bound the number of hits the bot detected to the number of shots taken
+		// Any extra hits must be from other sources, like telefrags.
+		//
+		// NOTE: It's possible for a railgun to damage two players in one shot,
+		// but for the purposes of accuracy data, the bot never expects a shot to
+		// deal more than 100% of the total damage possible against one target.
+		if (hits > shots)
+			hits = shots;
 
-	// Look up the weapon's reload rate relative to the bot
-	//
-	// NOTE: The division by zero check shouldn't be necessary, but why take chances?
-	reload_rate = ws->reload;
-	if (bs->weapon_rate > 0.0)
-		reload_rate /= bs->weapon_rate;
+		// FIXME: If any instant-hit weapons dealt blast damage, code should be
+		// inserted here to estimate that using BotBlastDamage().  Unfortunately,
+		// there's currently no way to determine where an instant hit blast shot
+		// exploded.  (You can't use traces because it's possible it exploded on
+		// an entity that was killed by the blast.  It gets even worse when
+		// shooting a weapon with spread.)  So if anyone adds code for instant
+		// hit blast damage weapons, its their responsibility to define the
+		// interface that communicates the blast location to the client.  Once that
+		// interface is defined, code can be written to estimate blast damage.
+	}
+	else {
+		// Track no shots or hits for missile weapons
+		hits = 0;
+		shots = 0;
+	}
 
-	// Check how many more times the bot's weapon shot
-	//
-	// NOTE: Melee weapons (eg. WP_GAUNTLET) only need to reload if they
-	// contact an enemy directly in front of them, so checking for total number
-	// of attacks is different for them.
-	if (ws->flags & WSF_MELEE)
-		fires = BotAccuracyFireCountMelee(bs, extra_reload_time, reload_rate);
-	else
-		fires = BotAccuracyFireCountHitscan(bs, extra_reload_time, reload_rate);
-	shots = fires * ws->shots;
-
-	// Don't update accuracy data if no additional shots were detected
-	if (shots <= 0)
-		return;
-
-	// Ignore perceived shots when the bot just used an item
-	//
-	// NOTE: A bug in PM_Weapon() in bg_pmove.c causes the code to not decay
-	// bs->ps->weaponTime if the player uses an item.  This is perceived by the
-	// AI code as an time increase, which could be inappropriately be read as a
-	// shot.  As such, all shots read when the bot uses an item are ignored.
-	// Incidently, players are not allowed to use a holdable item and shoot at
-	// the same time
-	//
-	// FIXME: Someone at id Software should fix this server bug.
-	if (bs->ps->pm_flags & PMF_USE_ITEM_HELD)
-		return;
-
-	// Sanity-bound the number of hits the bot detected to the number of shots taken
-	// Any extra hits must be from other sources, like telefrags.
-	//
-	// NOTE: It's possible for a railgun to damage two players in one shot,
-	// but for the purposes of accuracy data, the bot never expects a shot to
-	// deal more than 100% of the total damage possible against one target.
-	if (hits > shots)
-		hits = shots;
 
 	// Record enemy information in the accuracy data structure
-	AccuracyCreate(&acc, weapon, shots, hits, 0, 0);
+	AccuracyCreate(&acc, weapon, shots, hits, 0, 0,
+				   fire_time->actual, fire_time->potential);
 	BotAccuracyRecord(bs, &acc, weapon, &bs->aim_zone);
 }
 
@@ -1000,13 +1030,10 @@ infrastructure.
 void BotAccuracyUpdate(bot_state_t *bs)
 {
 	int hits;
-	float extra_reload_time;
+	history_t fire_time;
 
-	// Compute how much additional reload time the bot's weapon accrued since the last update
-	extra_reload_time = BotWeaponExtraReloadTime(bs);
-
-	// Account the potential and actual time spent attack the enemy
-	BotAttackTimeUpdate(bs, extra_reload_time);
+	// Compute the potential and actual amount of fire time accrued since the last update
+	BotWeaponFireTime(bs, &fire_time);
 
 	// Check if the bot hit anything this frame
 	hits = bs->ps->persistant[PERS_HITS] - bs->last_hit_count;
@@ -1015,13 +1042,13 @@ void BotAccuracyUpdate(bot_state_t *bs)
 	// by missiles
 	hits -= BotAccuracyUpdateMissile(bs);
 
-	// Process instant hit weapon accuracy data, given the estimated number
-	// of hits this turn from instant hit weapons.
+	// Process weapon firing accuracy data (primarily instant hit weapons),
+	// given the estimated number of hits this turn from instant hit weapons.
 	//
 	// NOTE: Technically this is just all hits that did not come from
 	// missiles.  This hit count could also include things like kamikaze
 	// and telefrag damage.
-	BotAccuracyUpdateWeapon(bs, extra_reload_time, hits);
+	BotAccuracyUpdateWeapon(bs, &fire_time, hits);
 
 	// Update hit counter
 	bs->last_hit_count = bs->ps->persistant[PERS_HITS];
@@ -1061,6 +1088,22 @@ void BotAccuracyUpdate(bot_state_t *bs)
 
 /*
 =============
+BotAttackRate
+
+Estimate the percent of time in combat the bot
+will fire the weapon associated with this accuracy
+record (presumably corollated to a specific combat
+zone and weapon).
+=============
+*/
+float BotAttackRate(bot_state_t *bs, bot_accuracy_t *acc)
+{
+	// Compute the bot's attack rate with this weapon in this combat situation
+	return acc->attack_rate.actual / acc->attack_rate.potential;
+}
+
+/*
+=============
 AccuracySetup
 
 Resets default data for accuracy statistics
@@ -1068,10 +1111,14 @@ Resets default data for accuracy statistics
 */
 void AccuracySetup(void)
 {
-	int weapon;
+	int weapon, dist_id, pitch_id;
 	float fires, shots, direct_hits, splash_hits;
 	float direct_accuracy, splash_accuracy, splash_damage;
+	float base_attack_rate, pitch_attack_rate, attack_rate;
+	float actual_attack_time, potential_attack_time;
+	float range;
 	weapon_stats_t *ws;
+	qboolean careless;
 
 	// Initialize each weapon's accuracy
 	for (weapon = WP_NONE+1; weapon < WP_NUM_WEAPONS; weapon++)
@@ -1083,7 +1130,7 @@ void AccuracySetup(void)
 		// Determine the weapon's accuracy for direct hits and splash
 		if (ws->radius >= 100) {
 			// NOTE: This averages to 1.0 when splash hits deal 50% damage
-			direct_accuracy = ws->accuracy *  .5;
+			direct_accuracy = ws->accuracy * 0.5;
 			splash_accuracy = ws->accuracy * 1.0;
 		} else {
 			direct_accuracy = ws->accuracy;
@@ -1099,8 +1146,64 @@ void AccuracySetup(void)
 		// Compute splash damage
 		splash_damage = splash_hits * ws->splash_damage * .5;
 
+		// Estimate the base percent of time the bot will attack with this weapon;
+		// Careless fire weapons are naturally fired more often.
+		careless = WeaponCareless(weapon);
+		base_attack_rate = (careless ? 0.65 : 0.55);
+
+		// Estimate the time spent to do one second of attacking
+		actual_attack_time = 1.0;
+		potential_attack_time = actual_attack_time / attack_rate;
+
 		// Create a default accuracy record using this data
 		AccuracyCreate(&acc_default_weapon[weapon],
-					   weapon, shots, direct_hits, splash_hits, splash_damage);
+					   weapon, shots, direct_hits, splash_hits, splash_damage,
+					   actual_attack_time, potential_attack_time);
+
+		// Cache the weapon's perceived maximum range
+		range = WeaponPerceivedMaxRange(range);
+
+		// Create zone specific default accuracy data
+		for (pitch_id = 0; pitch_id < ZCP_NUM_IDS; pitch_id++)
+		{
+			// Start with the base attack rate
+			pitch_attack_rate = base_attack_rate;
+
+			// Carefully fired slow missile weapons can be hard to aim
+			if (!careless && ws->speed > 0 && ws->speed < 1200)
+			{
+				// Fire less when aiming high, and also when aiming low without
+				// sufficient blast damage
+				// NOTE: A negative pitch value refers to aiming above the horizon;
+				// positive means aiming below.
+				if ( (pitch_zone_center[pitch_id] <= -ZCP_LOW) ||
+					 (pitch_zone_center[pitch_id] > -ZCP_LOW &&
+					  (ws->splash_damage / ws->damage) < 0.5) )
+				{
+					pitch_attack_rate *= 0.5;
+				}
+			}
+
+			// Load the data for each distance zone
+			for (dist_id = 0; dist_id < ZCD_NUM_IDS; dist_id++)
+			{
+				// The chance of firing drops drastically when out of range
+				attack_rate = pitch_attack_rate;
+				if (range < dist_zone_center[dist_id])
+					attack_rate *= 0.2;
+
+				// Estimate the time spent to do one second of attacking
+				actual_attack_time = 1.0;
+				potential_attack_time = actual_attack_time / attack_rate;
+
+				// Create accuracy data for this specific zone
+				// FIXME: It would be nice to compute better default values
+				// for the weapon accuracies too, not just firing rates.
+				AccuracyCreate(&acc_default_weap_zone[weapon][dist_id][pitch_id],
+							   weapon, shots, direct_hits, splash_hits, splash_damage,
+							   actual_attack_time, potential_attack_time);
+
+			}
+		}
 	}
 }

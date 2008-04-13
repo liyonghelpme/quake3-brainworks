@@ -491,7 +491,7 @@ Determine encounter traffic rates for a location, including the
 amount of time the bot will have to attack and be attacked.  The
 rates are filled out in the inputted "rates" structure.  Returns
 a pointer to the region nearest the inputted point, or NULL if
-an error occured.
+an error occurred.
 
 "nearby" is true if this function should use the bot's nearby player
 information when estimating how many enemies and teammates the bot

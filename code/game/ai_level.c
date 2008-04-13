@@ -80,7 +80,7 @@ LevelLibrarySetup
 
 Initialize a ton of random data.  Returns
 true if the AAS was setup properly and false
-if an error occured.
+if an error occurred.
 =================
 */
 qboolean LevelLibrarySetup(void)

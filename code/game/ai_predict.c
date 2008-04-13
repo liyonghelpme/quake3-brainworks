@@ -686,7 +686,7 @@ counterparts (which in particular, allow the forward movement
 axis to have a height).
 
 This function returns the number of seconds actually predicted
-(which will be zero if an error occured).
+(which will be zero if an error occurred).
 ========================
 */
 float EntityMotionPredictFrame(gentity_t *ent, motion_state_t *motion, float time,
@@ -830,7 +830,7 @@ void EntityMotionPredict(gentity_t *ent, motion_state_t *motion, float time)
 		estimated = EntityMotionPredictFrame(ent, motion, granularity, &cmd,
 											 ground_axies, air_axies);
 
-		// Abort if an error occured
+		// Abort if an error occurred
 		if (estimated < granularity)
 			break;
 
@@ -970,7 +970,7 @@ void PredictDebugEntityNow(gentity_t *ent)
 PredictDebugCheckEntry
 
 Checks one cached prediction entry to see
-if the predicted time has occured.  If so,
+if the predicted time has occurred.  If so,
 it compares the prediction to reality to see
 how good the prediction was, and then returns
 true.  Otherwise returns false.
@@ -986,7 +986,7 @@ qboolean PredictDebugCheckEntry(predict_debug_t *predicted)
 	EntityMotionStateTime(predicted->ent, &actual, predicted->motion.time);
 
 	// If the predicted time is sufficiently larger than the actual time,
-	// the predicted event has not yet occured
+	// the predicted event has not yet occurred
 	if (actual.time + 1e-5 < predicted->motion.time)
 		return qfalse;
 
@@ -1041,7 +1041,7 @@ void PredictDebugCheck(void)
 	int i;
 	predict_debug_t *predicted;
 
-	// Search the prediction array for predictions whose reality has occured
+	// Search the prediction array for predictions whose reality has occurred
 	i = 0;
 	while (i < predict_debug_size)
 	{

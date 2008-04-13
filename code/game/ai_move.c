@@ -1209,7 +1209,7 @@ void BotMoveProcess(bot_state_t *bs)
 	//
 	// NOTE: It's probably impossible for the bot input data to send speeds higher
 	// than 400 or less than 0, but it's best to check just to be safe.  Very
-	// strange things would happen if that ever occured and these checks weren't
+	// strange things would happen if that ever occurred and these checks weren't
 	// in place.
 	if (bi.speed <= 0)
 		speed_rate = 0.0;

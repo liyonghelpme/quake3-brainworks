@@ -266,7 +266,7 @@ for the current AI frame is returned.
 */
 float EntityTimestamp(gentity_t *ent)
 {
-	// Non-entities are, without loss of generality, synchronized with the server
+	// Non-entities are synchronized with the server
 	if (!ent)
 		return server_time;
 

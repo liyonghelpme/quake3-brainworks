@@ -158,7 +158,7 @@ qboolean BotEntityVisibleFast(bot_state_t *bs, gentity_t *ent)
 //   0x0 if the eye value is between the min and max of the bounding box
 //   0x1 if the eye value is less than the box's minimum
 //   0x2 if the eye value is greater than the box's maximum
-//   0x3 if an internal error occured
+//   0x3 if an internal error occurred
 //
 // Zone mask is a composite bitmask of these codes.  Bits 0 and 1 are for
 // the X dimension, bits 2 and 3 for the Y dimension, and bits 4 and 5 for
@@ -248,7 +248,7 @@ vector array.
 Returns SCAN_BOUND_PASS if the scans were extracted,
 SCAN_BOUND_INSIDE if the point is trivially visible (ie.
 viewable inside the bounding box), and SCAN_BOUND_FAIL
-if an error occured.  The errors almost always occur when
+if an error occurred.  The errors almost always occur when
 the minimum point of a bounding box is greater than
 the maximum point.
 ====================
